@@ -194,7 +194,30 @@ ALL:
 
 Looks like a complete program to me. A few aspects of the program are iffy though. `&lag` produces a syntax error and the large number actually has four prime factors instead of just two. Perhaps this is the corruption that we have to fix?
 
-I was lucky enough to stumble on this [writeup](http://web.mit.edu/jhawk/mnt/spo/git/git-doc/howto/recover-corrupted-object-harder.html) on a related topic. Although in that case the object was in a packfile instead of a blob, the core concept is still relevant. The approach was basically to assume a single byte was corrupted, and to brute force the value of every byte in the file one at a time. We can verify if we got it right by hashing. So I wrote a Shell script to do that (TODO). We run it three times, one for each corrupted blob, and make the necessary byte change in between runs.
+I was lucky enough to stumble on this [writeup](http://web.mit.edu/jhawk/mnt/spo/git/git-doc/howto/recover-corrupted-object-harder.html) on a related topic. Although in that case the object was in a packfile instead of a blob, the core concept is still relevant. The approach was basically to assume a single byte was corrupted, and to brute force the value of every byte in the file one at a time. We can verify if we got it right by hashing. I wrote a shell script to do this.
+
+The following script should be saved and executed in the same directory as `sharp.cpp` and `.git`. It counts down how many bytes are left to parse and when it finds a match it describes the byte substitution you need to perform in the file `fix`, prints it, and exits. Make sure you are running `git cat-file -p $hash` immediately before running this script, and that you carry over any previous substitutions.
+
+```bash
+#!/bin/bash
+FILE='sharp.cpp'
+FILE_BYTE_SIZE=$(wc -c < $FILE)
+TARGET_HASH='354ebf392533dce06174f9c8c093036c138935f3\nf8d0839dd728cb9a723e32058dcc386070d5e3b5\nd961f81a588fcfd5e57bbea7e17ddae8a5e61333\n'
+for B in $( seq 0 $(( $FILE_BYTE_SIZE - 1 )) ); do
+	echo $(( $FILE_BYTE_SIZE - $B ))
+	for X in $(printf %x'\n' $(seq 255)); do
+		OLD_BYTE=$(dd if=$FILE bs=1 count=1 skip=$B iflag=skip_bytes 2>/dev/null)
+		printf "\\x$X" | dd of=$FILE bs=1 count=1 seek=$B oflag=seek_bytes conv=notrunc 2>/dev/null
+		TRY_HASH=$(git hash-object $FILE)
+		if [[ $TARGET_HASH == *"$TRY_HASH"* ]]; then
+			FIX="Change 0x$OLD_BYTE to 0x$X at byte $B for $TRY_HASH"
+			echo $FIX >> fix; echo $FIX; exit 0
+		fi
+		echo $OLD_BYTE | dd of=$FILE bs=1 count=1 seek=$B oflag=seek_bytes conv=notrunc 2>/dev/null
+	done
+done
+exit 1
+```
 
 To get `354ebf3` to hash correctly, we have to change `51337` to `31337`.
 
